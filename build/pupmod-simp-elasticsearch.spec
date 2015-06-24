@@ -1,7 +1,7 @@
-Summary: ElasticSearch SIMP Puppet Module
+Summary: ElasticSearch Puppet Module
 Name: pupmod-simp-elasticsearch
 Version: 2.0.0
-Release: 0
+Release: 3
 License: Apache License, Version 2.0
 Group: Applications/System
 Source: %{name}-%{version}-%{release}.tar.gz
@@ -14,11 +14,12 @@ Requires: puppet >= 3.0.0
 Buildarch: noarch
 Requires: simp-bootstrap >= 4.2.0
 Obsoletes: pupmod-simp-elasticsearch-test
+Obsoletes: pupmod-electrical-elasticsearch
 
 Prefix: /etc/puppet/environments/simp/modules
 
 %description
-This puppet module uses the ElasticSearch module provided by Richard Pijnenburg
+This puppet module extends the ElasticSearch module provided by Richard Pijnenburg
 (electrical: https://github.com/electrical) and moulds it into the SIMP
 framework with some reasonable defaults.
 
@@ -45,10 +46,7 @@ done
 
 %files
 %defattr(0640,root,puppet,0750)
-%{prefix}/elasticsearch/manifests/simp.pp
-%{prefix}/elasticsearch/manifests/simp
-%{prefix}/elasticsearch/templates/simp
-%{prefix}/elasticsearch/lib/puppet/parser/functions/es_iptables_format.rb
+%{prefix}/elasticsearch
 
 %post
 #!/bin/sh
@@ -57,6 +55,9 @@ done
 # Post uninstall stuff
 
 %changelog
+* Wed Jun 24 2015 Trevor Vaughan <tvaughan@onyxpoint.com> - 2.0.0-1
+- Updated to incorporate the electrical-elasticsearch module directly.
+
 * Tue Feb 24 2015 Trevor Vaughan <tvaughan@onyxpoint.com> - 2.0.0-0
 - Updated to move into the new default 'simp' environment.
 
