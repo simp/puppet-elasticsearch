@@ -4,22 +4,30 @@
 #
 # === Parameters
 #
+# [*ensure*]
+#   String. Controls if the managed resources shall be <tt>present</tt> or
+#   <tt>absent</tt>. If set to <tt>absent</tt>:
+#   * The managed software packages are being uninstalled.
+#   * Any traces of the packages will be purged as good as possible. This may
+#     include existing configuration files. The exact behavior is provider
+#     dependent. Q.v.:
+#     * Puppet type reference: {package, "purgeable"}[http://j.mp/xbxmNP]
+#     * {Puppet's package provider source code}[http://j.mp/wtVCaL]
+#   * System modifications (if any) will be reverted as good as possible
+#     (e.g. removal of created users, services, changed log settings, ...).
+#   * This is thus destructive and should be used with care.
+#   Defaults to <tt>present</tt>.
+#
 # [*file*]
 #   File path of the template ( json file )
 #   Value type is string
 #   Default value: undef
 #   This variable is optional
 #
-# [*replace*]
-#   Set to 'true' if you intend to replace the existing template
-#   Value type is boolean
-#   Default value: false
-#   This variable is optional
-#
-# [*delete*]
-#   Set to 'true' if you intend to delete the existing template
-#   Value type is boolean
-#   Default value: false
+# [*content*]
+#   Contents of the template ( json )
+#   Value type is string
+#   Default value: undef
 #   This variable is optional
 #
 # [*host*]
@@ -34,84 +42,114 @@
 #   Default value: 9200
 #   This variable is optional
 #
+# [*protocol*]
+#   Defines the protocol to use for api calls using curl
+#   Default value from main class is: http
+#
+# [*ssl_args*]
+#   SSL arguments for curl commands.
+#   Default value from main class is an empty string.
+#
 # === Authors
 #
-# * Richard Pijnenburg <mailto:richard@ispavailability.com>
+# * Richard Pijnenburg <mailto:richard.pijnenburg@elasticsearch.com>
 #
 define elasticsearch::template(
-  $file    = undef,
-  $replace = false,
-  $delete  = false,
-  $host    = 'localhost',
-  $port    = 9200
+  $ensure   = 'present',
+  $file     = undef,
+  $content  = undef,
+  $host     = 'localhost',
+  $port     = 9200,
+  $protocol = $::elasticsearch::protocol,
+  $ssl_args = $::elasticsearch::ssl_args
 ) {
 
   require elasticsearch
 
+  # ensure
+  if ! ($ensure in [ 'present', 'absent' ]) {
+    fail("\"${ensure}\" is not a valid ensure parameter value")
+  }
+
+  if ! is_integer($port) {
+    fail("\"${port}\" is not an integer")
+  }
+
   Exec {
-    path => [ '/bin', '/usr/bin', '/usr/local/bin' ]
+    path      => [ '/bin', '/usr/bin', '/usr/local/bin' ],
+    cwd       => '/',
+    tries     => 6,
+    try_sleep => 10,
   }
 
   # Build up the url
-  $es_url = "http://${host}:${port}/_template/${name}"
+  $es_url = "${protocol}://${host}:${port}/_template/${name}"
 
   # Can't do a replace and delete at the same time
-  if $replace == true and $delete == true {
-    fail('Replace and Delete cant be used together')
+
+  if ($ensure == 'present') {
+
+    # Fail when no file or content is supplied
+    if $file == undef and $content == undef {
+      fail('The variables "file" and "content" cannot be empty when inserting or updating a template.')
+    } elsif $file != undef and $content != undef {
+      fail('The variables "file" and "content" cannot be used together when inserting or updating a template.')
+    } else { # we are good to go. notify to insert in case we deleted
+      $insert_notify = Exec[ "insert_template_${name}" ]
+    }
+
+  } else {
+
+    $insert_notify = undef
+
   }
 
-  if $delete == false {
-    # Fail when no file is supplied
-    if $file == undef {
-      fail('The variable "file" cannot be empty when inserting or updating a template')
+  # Delete the existing template
+  # First check if it exists of course
+  exec { "delete_template_${name}":
+    command     => "curl ${ssl_args} -s -XDELETE ${es_url}",
+    onlyif      => "test $(curl ${ssl_args} -s '${es_url}?pretty=true' | wc -l) -gt 1",
+    notify      => $insert_notify,
+    refreshonly => true,
+  }
+
+  if ($ensure == 'absent') {
+
+    # delete the template file on disk and then on the server
+    file { "${elasticsearch::params::homedir}/templates_import/elasticsearch-template-${name}.json":
+      ensure  => 'absent',
+      notify  => Exec[ "delete_template_${name}" ],
+      require => File[ "${elasticsearch::params::homedir}/templates_import" ],
     }
   }
 
-  $file_ensure = $delete ? {
-    true  => 'absent',
-    false => 'present'
-  }
+  if ($ensure == 'present') {
 
-  $file_notify = $delete ? {
-    true  => undef,
-    false => Exec[ "insert_template ${name}" ]
-  }
-
-  # place the template file
-  file { "${elasticsearch::confdir}/templates_import/elasticsearch-template-${name}.json":
-    ensure  => $file_ensure,
-    source  => $file,
-    notify  => $file_notify,
-    require => Exec[ 'mkdir_templates' ],
-  }
-
-  if $replace == true or $delete == true {
-
-    # Only notify the insert_template call when we do a replace.
-    $exec_notify = $replace ? {
-      true  => Exec[ "insert_template ${name}" ],
-      false => undef
+    if $content == undef {
+      # place the template file using the file source
+      file { "${elasticsearch::params::homedir}/templates_import/elasticsearch-template-${name}.json":
+        ensure  => file,
+        source  => $file,
+        notify  => Exec[ "delete_template_${name}" ],
+        require => File[ "${elasticsearch::params::homedir}/templates_import" ],
+      }
+    } else {
+      # place the template file using content
+      file { "${elasticsearch::params::homedir}/templates_import/elasticsearch-template-${name}.json":
+        ensure  => file,
+        content => $content,
+        notify  => Exec[ "delete_template_${name}" ],
+        require => File[ "${elasticsearch::params::homedir}/templates_import" ],
+      }
     }
 
-    # Delete the existing template
-    # First check if it exists of course
-    exec { "delete_template ${name}":
-      command => "curl -s -XDELETE ${es_url}",
-      onlyif  => "test $(curl -s '${es_url}?pretty=true' | wc -l) -gt 1",
-      notify  => $exec_notify
-    }
-
-  }
-
-  # Insert the template if we don't delete an existing one
-  # Before inserting we check if a template exists with that same name
-  if $delete == false {
-    exec { "insert_template ${name}":
-      command     => "curl -s -XPUT ${es_url} -d @${elasticsearch::confdir}/templates_import/elasticsearch-template-${name}.json",
-      unless      => "test $(curl -s '${es_url}?pretty=true' | wc -l) -gt 1",
+    exec { "insert_template_${name}":
+      command     => "curl ${ssl_args} -sL -w \"%{http_code}\\n\" -XPUT ${es_url} -d @${elasticsearch::params::homedir}/templates_import/elasticsearch-template-${name}.json -o /dev/null | egrep \"(200|201)\" > /dev/null",
+      unless      => "test $(curl ${ssl_args} -s '${es_url}?pretty=true' | wc -l) -gt 1",
       refreshonly => true,
-      tries       => 3,
-      try_sleep   => 10
+      loglevel    => 'debug',
     }
+
   }
+
 }
