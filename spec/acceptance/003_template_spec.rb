@@ -1,70 +1,152 @@
 require 'spec_helper_acceptance'
+require 'json'
 
-describe "elasticsearch template define:" do
+# rubocop:disable Metrics/BlockLength
+describe 'elasticsearch::template', :with_cleanup do
+  before :all do
+    shell "mkdir -p #{default['distmoduledir']}/another/files"
 
-  shell("mkdir -p #{default['distmoduledir']}/another/files")
-  shell("echo '#{test_settings['good_json']}' >> #{default['distmoduledir']}/another/files/good.json")
-  shell("echo '#{test_settings['bad_json']}' >> #{default['distmoduledir']}/another/files/bad.json")
+    create_remote_file default,
+                       "#{default['distmoduledir']}/another/files/good.json",
+                       JSON.dump(test_settings['template'])
 
-  describe "Insert a template with valid json content" do
-
-    it 'should run successfully' do
-      pp = "class { 'elasticsearch': config => { 'node.name' => 'elasticsearch001', 'cluster.name' => '#{test_settings['cluster_name']}' }, manage_repo => true, repo_version => '#{test_settings['repo_version']}', java_install => true }
-          elasticsearch::instance { 'es-01': config => { 'node.name' => 'elasticsearch001', 'http.port' => '#{test_settings['port_a']}' } }
-          elasticsearch::template { 'foo': ensure => 'present', file => 'puppet:///modules/another/good.json' }"
-
-      # Run it twice and test for idempotency
-      apply_manifest(pp, :catch_failures => true)
-      expect(apply_manifest(pp, :catch_failures => true).exit_code).to be_zero
-    end
-
-    it 'should report as existing in Elasticsearch' do
-      curl_with_retries('validate template as installed', default, "http://localhost:#{test_settings['port_a']}/_template/foo | grep logstash", 0)
-    end
+    create_remote_file default,
+                       "#{default['distmoduledir']}/another/files/bad.json",
+                       JSON.dump(test_settings['template'])[0..-5]
   end
 
-  if fact('puppetversion') =~ /3\.[2-9]\./
-    describe "Insert a template with bad json content" do
+  describe 'valid json template' do
+    context 'from source', :with_cleanup do
+      it 'should run successfully' do
+        pp = <<-EOS
+          class { 'elasticsearch':
+            config => {
+              'node.name' => 'elasticsearch001',
+              'cluster.name' => '#{test_settings['cluster_name']}',
+              'network.host' => '0.0.0.0',
+            },
+            manage_repo => true,
+            repo_version => '#{test_settings['repo_version']}',
+            java_install => true
+          }
 
-      it 'run should fail' do
-        pp = "class { 'elasticsearch': config => { 'node.name' => 'elasticsearch001', 'cluster.name' => '#{test_settings['cluster_name']}' }, manage_repo => true, repo_version => '#{test_settings['repo_version']}', java_install => true }
-             elasticsearch::instance { 'es-01': config => { 'node.name' => 'elasticsearch001', 'http.port' => '#{test_settings['port_a']}' } }
-             elasticsearch::template { 'foo': ensure => 'present', file => 'puppet:///modules/another/bad.json' }"
+          elasticsearch::instance { 'es-01':
+            config => {
+              'node.name' => 'elasticsearch001',
+              'http.port' => '#{test_settings['port_a']}'
+            }
+          }
 
-        apply_manifest(pp, :expect_failures => true)
+          elasticsearch::template { 'foo':
+            ensure => 'present',
+            source => 'puppet:///modules/another/good.json'
+          }
+        EOS
+
+        # Run it twice and test for idempotency
+        apply_manifest pp, :catch_failures => true
+        apply_manifest pp, :catch_changes => true
       end
 
+      describe port(test_settings['port_a']) do
+        it 'open', :with_retries do
+          should be_listening
+        end
+      end
+
+      describe server :container do
+        describe http(
+          "http://localhost:#{test_settings['port_a']}/_template/foo",
+          :params => { 'flat_settings' => 'false' }
+        ) do
+          it 'returns the installed template', :with_retries do
+            expect(JSON.parse(response.body)['foo'])
+              .to include(test_settings['template'])
+          end
+        end
+      end
     end
 
-  else
-    # The exit codes have changes since Puppet 3.2x
-    # Since beaker expectations are based on the most recent puppet code All runs on previous versions fails.
+    describe 'from content' do
+      it 'should run successfully' do
+        pp = <<-EOS
+          class { 'elasticsearch':
+            config => {
+              'node.name' => 'elasticsearch001',
+              'cluster.name' => '#{test_settings['cluster_name']}',
+              'network.host' => '0.0.0.0',
+            },
+            manage_repo => true,
+            repo_version => '#{test_settings['repo_version']}',
+            java_install => true
+          }
+
+          elasticsearch::instance { 'es-01':
+            config => {
+              'node.name' => 'elasticsearch001',
+              'http.port' => '#{test_settings['port_a']}'
+            }
+          }
+
+          elasticsearch::template { 'foo':
+            ensure => 'present',
+            content => '#{JSON.dump(test_settings['template'])}'
+          }
+        EOS
+
+        # Run it twice and test for idempotency
+        apply_manifest pp, :catch_failures => true
+        apply_manifest pp, :catch_changes => true
+      end
+
+      describe port(test_settings['port_a']) do
+        it 'open', :with_retries do
+          should be_listening
+        end
+      end
+
+      describe server :container do
+        describe http(
+          "http://localhost:#{test_settings['port_a']}/_template/foo",
+          :params => { 'flat_settings' => 'false' }
+        ) do
+          it 'returns the installed template', :with_retries do
+            expect(JSON.parse(response.body)['foo'])
+              .to include(test_settings['template'])
+          end
+        end
+      end
+    end
   end
 
-  describe "module removal" do
+  describe 'invalid json template' do
+    it 'should fail to apply cleanly' do
+      pp = <<-EOS
+        class { 'elasticsearch':
+          config => {
+            'node.name' => 'elasticsearch001',
+            'cluster.name' => '#{test_settings['cluster_name']}',
+            'network.host' => '0.0.0.0',
+          },
+          manage_repo => true,
+          repo_version => '#{test_settings['repo_version']}',
+          java_install => true
+        }
 
-    it 'should run successfully' do
-      pp = "class { 'elasticsearch': ensure => 'absent' }
-            elasticsearch::instance{ 'es-01': ensure => 'absent' }
-           "
+        elasticsearch::instance { 'es-01':
+          config => {
+            'node.name' => 'elasticsearch001',
+            'http.port' => '#{test_settings['port_a']}'
+          }
+        }
 
-      apply_manifest(pp, :catch_failures => true)
+        elasticsearch::template { 'foo':
+          ensure => 'present',
+          file => 'puppet:///modules/another/bad.json'
+        }
+      EOS
+
+      apply_manifest pp, :expect_failures => true
     end
-
-    describe file('/etc/elasticsearch/es-01') do
-      it { should_not be_directory }
-    end
-
-    describe package(test_settings['package_name']) do
-      it { should_not be_installed }
-    end
-
-    describe service(test_settings['service_name_a']) do
-      it { should_not be_enabled }
-      it { should_not be_running }
-    end
-
   end
-
-
 end

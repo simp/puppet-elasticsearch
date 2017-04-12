@@ -1,21 +1,31 @@
+# Set the Linux distribution w/defaults (see spec/acceptance/nodesets)
 DISTRO ?= ubuntu-server-1404-x64
-PE ?= false
-STRICT_VARIABLES ?= yes
+BEAKER_set ?= $(DISTRO)
+export BEAKER_set
 
-ifeq ($(PE), true)
-	PE_VER ?= 3.8.3
-	BEAKER_PE_VER := $(PE_VER)
-	BEAKER_IS_PE := $(PE)
+# Default to installing agent (version 4.x)
+PUPPET_INSTALL_TYPE ?= agent
+
+# Set Puppet Enterprise defaults
+ifeq ($(PUPPET_INSTALL_TYPE), pe)
+	PUPPET_INSTALL_VERSION ?= 2016.1.2
+	BEAKER_PE_VER ?= $(PUPPET_INSTALL_VERSION)
 	export BEAKER_PE_VER
+	BEAKER_IS_PE := true
 	export BEAKER_IS_PE
 endif
 
-.DEFAULT_GOAL := bundle
+# Export potentially set variables for rake/rspec/beaker
+export PUPPET_INSTALL_TYPE
+export BEAKER_PE_DIR=spec/fixtures/artifacts
+export STRICT_VARIABLES=yes
 
-.PHONY: bundle
-bundle:
+.DEFAULT_GOAL := .vendor
+
+.vendor: Gemfile
 	bundle update || true
 	bundle install --path .vendor
+	touch .vendor
 
 .PHONY: clean
 clean:
@@ -29,32 +39,25 @@ clean-logs:
 
 .PHONY: release
 release: clean-logs
-	puppet module build
+	bundle exec puppet module build
 
 .PHONY: test-intake
 test-intake: test-docs test-rspec
 
 .PHONY: test-acceptance
-test-acceptance: bundle
-	BEAKER_PE_DIR=spec/fixtures/artifacts \
-		BEAKER_set=$(DISTRO) \
-		bundle exec rake beaker:acceptance
+test-acceptance: .vendor
+	bundle exec rake beaker:acceptance
 
 .PHONY: test-integration
-test-integration: bundle
-	BEAKER_PE_DIR=spec/fixtures/artifacts \
-		BEAKER_PE_VER=$(PE_VER) \
-		BEAKER_IS_PE=$(PE) \
-		BEAKER_set=$(DISTRO) \
-		bundle exec rake beaker:integration
+test-integration: .vendor
+	bundle exec rake beaker:integration
 
 .PHONY: test-docs
-test-docs: bundle
-	bundle exec rake parse_doc
+test-docs: .vendor
+	bundle exec rake spec_docs
 
 .PHONY: test-rspec
-test-rspec: bundle
+test-rspec: .vendor
 	bundle exec rake lint
 	bundle exec rake validate
-	STRICT_VARIABLES=$(STRICT_VARIABLES) \
-		bundle exec rake spec_verbose
+	bundle exec rake spec_unit
