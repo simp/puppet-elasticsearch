@@ -1,77 +1,123 @@
 require 'spec_helper'
 
+# rubocop:disable Metrics/BlockLength
 describe 'elasticsearch::template', :type => 'define' do
-
-  let :facts do {
-    :operatingsystem => 'CentOS',
-    :kernel => 'Linux',
-    :osfamily => 'RedHat',
-    :operatingsystemmajrelease => '6',
-    :scenario => '',
-    :common => ''
-  } end
+  let :facts do
+    {
+      :operatingsystem => 'CentOS',
+      :kernel => 'Linux',
+      :osfamily => 'RedHat',
+      :operatingsystemmajrelease => '6',
+      :scenario => '',
+      :common => ''
+    }
+  end
 
   let(:title) { 'foo' }
-  let(:pre_condition) { 'class {"elasticsearch": config => { "node" => {"name" => "test" }}}'}
-
-  context "Add a template" do
-
-    let :params do {
-      :ensure => 'present',
-      :file   => 'puppet:///path/to/foo.json',
-    } end
-
-    it { should contain_elasticsearch__template('foo') }
-    it { should contain_file('/usr/share/elasticsearch/templates_import/elasticsearch-template-foo.json').with(:source => 'puppet:///path/to/foo.json', :notify => "Exec[delete_template_foo]") }
-    it { should contain_exec('insert_template_foo').with(:command => "curl  -sL -w \"%{http_code}\\n\" -XPUT http://localhost:9200/_template/foo -d @/usr/share/elasticsearch/templates_import/elasticsearch-template-foo.json -o /dev/null | egrep \"(200|201)\" > /dev/null", :unless => 'test $(curl  -s \'http://localhost:9200/_template/foo?pretty=true\' | wc -l) -gt 1') }
+  let(:pre_condition) do
+    'class { "elasticsearch" : }'
   end
 
-  context "Delete a template" do
+  describe 'parameter validation' do
+    [:api_ca_file, :api_ca_path].each do |param|
+      let :params do
+        {
+          :ensure => 'present',
+          :content => '{}',
+          param => 'foo/cert'
+        }
+      end
 
-    let :params do {
-      :ensure => 'absent'
-    } end
-
-    it { should contain_elasticsearch__template('foo') }
-    it { should_not contain_file('/usr/share/elasticsearch/templates_import/elasticsearch-template-foo.json').with(:source => 'puppet:///path/to/foo.json') }
-    it { should_not contain_exec('insert_template_foo') }
-    it { should contain_exec('delete_template_foo').with(:command => 'curl  -s -XDELETE http://localhost:9200/_template/foo', :notify => nil, :onlyif => 'test $(curl  -s \'http://localhost:9200/_template/foo?pretty=true\' | wc -l) -gt 1' ) }
+      it 'validates cert paths' do
+        is_expected.to compile.and_raise_error(/absolute path/)
+      end
+    end
   end
 
-  context "Add template with alternative host and port" do
-
-    let :params do {
-      :file => 'puppet:///path/to/foo.json',
-      :host => 'otherhost',
-      :port => 9201
-    } end
-
-    it { should contain_elasticsearch__template('foo') }
-    it { should contain_file('/usr/share/elasticsearch/templates_import/elasticsearch-template-foo.json').with(:source => 'puppet:///path/to/foo.json') }
-    it { should contain_exec('insert_template_foo').with(:command => "curl  -sL -w \"%{http_code}\\n\" -XPUT http://otherhost:9201/_template/foo -d @/usr/share/elasticsearch/templates_import/elasticsearch-template-foo.json -o /dev/null | egrep \"(200|201)\" > /dev/null", :unless => 'test $(curl  -s \'http://otherhost:9201/_template/foo?pretty=true\' | wc -l) -gt 1') }
-  end
-
-  context "Add template using content" do
-
-    let :params do {
-      :content => '{"template":"*","settings":{"number_of_replicas":0}}'
-    } end
+  describe 'template from source' do
+    let :params do
+      {
+        :ensure => 'present',
+        :source => 'puppet:///path/to/foo.json',
+        :api_protocol => 'https',
+        :api_host => '127.0.0.1',
+        :api_port => 9201,
+        :api_timeout => 11,
+        :api_basic_auth_username => 'elastic',
+        :api_basic_auth_password => 'password',
+        :validate_tls => false
+      }
+    end
 
     it { should contain_elasticsearch__template('foo') }
-    it { should contain_file('/usr/share/elasticsearch/templates_import/elasticsearch-template-foo.json').with(:content => '{"template":"*","settings":{"number_of_replicas":0}}') }
+    it do
+      should contain_es_instance_conn_validator('foo-template')
+        .that_comes_before('Elasticsearch_template[foo]')
+    end
+    it 'passes through parameters' do
+      should contain_elasticsearch_template('foo').with(
+        :ensure => 'present',
+        :source => 'puppet:///path/to/foo.json',
+        :protocol => 'https',
+        :host => '127.0.0.1',
+        :port => 9201,
+        :timeout => 11,
+        :username => 'elastic',
+        :password => 'password',
+        :validate_tls => false
+      )
+    end
   end
 
-  context "Add template using ssl" do
+  describe 'class parameter inheritance' do
+    let :params do
+      {
+        :ensure => 'present',
+        :content => '{}'
+      }
+    end
+    let(:pre_condition) do
+      <<-EOS
+        class { 'elasticsearch' :
+          api_protocol => 'https',
+          api_host => '127.0.0.1',
+          api_port => 9201,
+          api_timeout => 11,
+          api_basic_auth_username => 'elastic',
+          api_basic_auth_password => 'password',
+          api_ca_file => '/foo/bar.pem',
+          api_ca_path => '/foo/',
+          validate_tls => false,
+        }
+      EOS
+    end
 
-    let :params do {
-      :file     => 'puppet:///path/to/foo.json',
-      :protocol => 'https',
-      :ssl_args => '-u test_user:test_password',
-    } end
-
-    it { should contain_elasticsearch__template('foo') }
-    it { should contain_file('/usr/share/elasticsearch/templates_import/elasticsearch-template-foo.json').with(:source => 'puppet:///path/to/foo.json') }
-    it { should contain_exec('insert_template_foo').with(:command => "curl -u test_user:test_password -sL -w \"%{http_code}\\n\" -XPUT https://localhost:9200/_template/foo -d @/usr/share/elasticsearch/templates_import/elasticsearch-template-foo.json -o /dev/null | egrep \"(200|201)\" > /dev/null", :unless => 'test $(curl -u test_user:test_password -s \'https://localhost:9200/_template/foo?pretty=true\' | wc -l) -gt 1') }
+    it do
+      should contain_elasticsearch_template('foo').with(
+        :ensure => 'present',
+        :content => '{}',
+        :protocol => 'https',
+        :host => '127.0.0.1',
+        :port => 9201,
+        :timeout => 11,
+        :username => 'elastic',
+        :password => 'password',
+        :ca_file => '/foo/bar.pem',
+        :ca_path => '/foo/',
+        :validate_tls => false
+      )
+    end
   end
 
+  describe 'template deletion' do
+    let :params do
+      {
+        :ensure => 'absent'
+      }
+    end
+
+    it 'removes templates' do
+      should contain_elasticsearch_template('foo').with(:ensure => 'absent')
+    end
+  end
 end

@@ -41,7 +41,7 @@ class elasticsearch::params {
   $status = 'enabled'
 
   # restart on configuration change?
-  $restart_on_change = true
+  $restart_on_change = false
 
   # Purge configuration directory
   $purge_configdir = false
@@ -59,6 +59,14 @@ class elasticsearch::params {
     'index.search.slowlog'   => 'TRACE, index_search_slow_log_file',
     'index.indexing.slowlog' => 'TRACE, index_indexing_slow_log_file',
   }
+
+  $file_rolling_type = 'dailyRollingFile'
+
+  $daily_rolling_date_pattern = '"\'.\'yyyy-MM-dd"'
+
+  $rolling_file_max_backup_index = 1
+
+  $rolling_file_max_file_size ='10MB'
 
   #### Internal module values
 
@@ -109,8 +117,7 @@ class elasticsearch::params {
       $installpath = '/opt/elasticsearch'
       $homedir     = '/usr/share/elasticsearch'
       $plugindir   = "${homedir}/plugins"
-      $plugintool  = "${homedir}/bin/plugin"
-      $datadir     = '/usr/share/elasticsearch/data'
+      $datadir     = '/var/lib/elasticsearch'
     }
     'OpenBSD': {
       $configdir   = '/etc/elasticsearch'
@@ -119,7 +126,6 @@ class elasticsearch::params {
       $installpath = undef
       $homedir     = '/usr/local/elasticsearch'
       $plugindir   = "${homedir}/plugins"
-      $plugintool  = "${homedir}/bin/plugin"
       $datadir     = '/var/elasticsearch/data'
     }
     default: {
@@ -130,22 +136,12 @@ class elasticsearch::params {
 
   # packages
   case $::operatingsystem {
-    'RedHat', 'CentOS', 'Fedora', 'Scientific', 'Amazon', 'OracleLinux', 'SLC': {
-      # main application
-      $package = [ 'elasticsearch' ]
-    }
-    'Debian', 'Ubuntu': {
-      # main application
-      $package = [ 'elasticsearch' ]
-    }
-    'OpenSuSE', 'SLES': {
-      $package = [ 'elasticsearch' ]
+    'RedHat', 'CentOS', 'Fedora', 'Scientific', 'Amazon', 'OracleLinux', 'SLC',
+    'Debian', 'Ubuntu', 'OpenSuSE', 'SLES', 'OpenBSD': {
+      $package = 'elasticsearch'
     }
     'Gentoo': {
-      $package = [ 'app-misc/elasticsearch' ]
-    }
-    'OpenBSD': {
-      $package = [ 'elasticsearch' ]
+      $package = 'app-misc/elasticsearch'
     }
     default: {
       fail("\"${module_name}\" provides no package default value
@@ -260,9 +256,10 @@ class elasticsearch::params {
         $systemd_service_path = '/usr/lib/systemd/system'
         $pid_dir              = '/var/run/elasticsearch'
       } else {
-        $init_template     = 'elasticsearch.SLES.erb'
-        $service_providers = [ 'init' ]
-        $pid_dir           = false
+        $init_template        = 'elasticsearch.SLES.erb'
+        $service_providers    = [ 'init' ]
+        $systemd_service_path = undef
+        $pid_dir              = false
       }
     }
     'Gentoo': {
