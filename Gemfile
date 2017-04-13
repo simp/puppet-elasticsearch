@@ -3,13 +3,15 @@ source 'https://rubygems.org'
 puppetversion = ENV['PUPPET_VERSION'] || '~> 3.8.0'
 gem 'puppet', puppetversion, :require => false
 
-gem 'beaker', '~> 2.51'
-gem 'beaker-pe', '~> 0.12'
-gem 'beaker-rspec', '~> 5.0'
+gem 'beaker', '~> 3.7'
+gem 'beaker-pe', '~> 1.8'
+gem 'beaker-rspec', '~> 6.0'
+gem 'beaker-puppet_install_helper'
 gem 'metadata-json-lint'
 gem 'rspec-puppet', '~> 2.4'
 gem 'specinfra', '~> 2.60'
 gem 'infrataster'
+gem 'puppet-blacksmith'
 
 gem 'pry'
 gem 'docker-api', '~> 1.0'
